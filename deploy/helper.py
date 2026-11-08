@@ -66,6 +66,7 @@ def apply_config(path, content):
     try:
         run(['/usr/sbin/nginx', '-t'])
         run(['/usr/bin/systemctl', 'reload', 'nginx.service'])
+        # Reload acknowledgment is asynchronous; new workers take over shortly.
     except Exception:
         if previous is None:
             path.unlink(missing_ok=True)

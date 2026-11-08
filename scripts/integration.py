@@ -51,10 +51,26 @@ for attempt in range(30):
         time.sleep(1)
 else:
     raise RuntimeError('Panel did not recover after reinstall')
+def wait_site(domain, expected):
+    # nginx reload signals its master asynchronously; verify eventual HTTP behavior.
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    last = None
+    for _ in range(50):
+        request = urllib.request.Request('http://127.0.0.1/', headers={'Host': domain})
+        try:
+            with direct.open(request, timeout=2) as response:
+                last = response.read()
+                if expected in last:
+                    return
+        except (urllib.error.URLError, OSError) as error:
+            last = str(error)
+        time.sleep(0.1)
+    raise AssertionError((domain, 'HTTP content did not converge after reload', last))
+
+
 api('sites', {'domain': 'node-test.example.com', 'kind': 'static'})
 try:
-    request = urllib.request.Request('http://127.0.0.1/', headers={'Host': 'node-test.example.com'})
-    assert b'node-test.example.com' in urllib.request.urlopen(request).read()
+    wait_site('node-test.example.com', b'node-test.example.com')
     api('sites', {'domain': 'node-test.example.com', 'kind': 'static'}, expected=400)
     assert any(s['domain'] == 'node-test.example.com' for s in api('sites')['sites'])
 finally:
@@ -76,8 +92,7 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 18080), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 api('sites', {'domain': 'proxy-test.example.com', 'kind': 'proxy', 'port': 18080})
 try:
-    request = urllib.request.Request('http://127.0.0.1/', headers={'Host': 'proxy-test.example.com'})
-    assert b'proxy integration passed' in urllib.request.urlopen(request).read()
+    wait_site('proxy-test.example.com', b'proxy integration passed')
 finally:
     api('sites/proxy-test.example.com/delete', {})
     server.shutdown()
