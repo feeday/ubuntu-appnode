@@ -15,7 +15,7 @@
   <aside id="sidebar">
     <a class="brand" href="/"><span class="brand-mark small">u<span>n</span></span><span>Ubuntu Node<small>SERVER CONSOLE</small></span></a>
     <div class="nav-label">工作空间</div>
-    <nav aria-label="主导航"><button class="nav active" data-view="overview"><span>◈</span>概览</button><button class="nav" data-view="sites"><span>▦</span>网站管理</button><button class="nav" data-view="services"><span>☷</span>系统服务</button><button class="nav" data-view="audit"><span>≡</span>操作日志</button></nav>
+    <nav aria-label="主导航"><button class="nav active" data-view="overview"><span>◈</span>概览</button><button class="nav" data-view="sites"><span>▦</span>网站管理</button><button class="nav" data-view="services"><span>☷</span>系统服务</button><button class="nav" data-view="firewall"><span>◇</span>防火墙</button><button class="nav" data-view="audit"><span>≡</span>操作日志</button></nav>
     <div class="side-bottom"><span class="dot"></span> 本机节点<small>Ubuntu Node · v0.1.0</small></div>
   </aside>
   <main>
@@ -30,6 +30,13 @@
       </section>
       <section id="view-sites" class="view" hidden><div class="page-heading"><div><p class="eyebrow">WEBSITES</p><h1>网站管理</h1><p class="muted">管理本面板创建的 Nginx 站点。</p></div><button id="new-site" class="primary">＋ 新建网站</button></div><div class="card table-card"><div id="sites-list"></div></div><p class="muted small-text">首版提供 HTTP 站点。请在服务器安全组按需开放 80 端口；HTTPS 证书需另外配置。</p></section>
       <section id="view-services" class="view" hidden><div class="page-heading"><div><p class="eyebrow">SYSTEM SERVICES</p><h1>系统服务</h1><p class="muted">管理预设服务；未安装的服务只显示状态。</p></div><button id="refresh-services" class="secondary">↻ 刷新状态</button></div><div class="card table-card"><div id="services-list"></div></div></section>
+      <section id="view-firewall" class="view" hidden>
+        <div class="page-heading"><div><p class="eyebrow">IPTABLES · IPv4</p><h1>防火墙</h1><p class="muted">按顺序匹配入站规则，网页编辑后统一保存。</p></div><button id="refresh-firewall" class="secondary">↻ 刷新</button></div>
+        <div class="card firewall-info"><p id="firewall-status">正在检查权限…</p><p class="muted small-text" id="firewall-protected"></p><p class="muted small-text">仅管理 IPv4 INPUT 入站流量，不覆盖 IPv6 或 Docker 转发流量。允许规则优先接受匹配流量；未匹配流量继续遵循原系统规则。云安全组需另行配置。</p></div>
+        <div class="firewall-toolbar"><span id="firewall-dirty" class="muted">暂无未保存修改</span><div><button id="new-firewall-rule" class="secondary">＋ 添加规则</button> <button id="save-firewall" class="primary">保存并应用</button></div></div>
+        <div class="card table-card"><div id="firewall-list"></div></div>
+        <details class="card"><summary>查看当前系统规则（只读）</summary><h3>INPUT</h3><pre id="firewall-system"></pre><h3>本面板管理链</h3><pre id="firewall-active"></pre></details>
+      </section>
       <section id="view-audit" class="view" hidden><div class="page-heading"><div><p class="eyebrow">ACTIVITY</p><h1>操作日志</h1><p class="muted">最近 100 条登录与管理操作。</p></div><button id="refresh-audit" class="secondary">↻ 刷新日志</button></div><div class="card table-card"><div id="audit-list"></div></div></section>
       <footer>Ubuntu Node <span>独立开发 · 为 Ubuntu 而生</span></footer>
     </div>
@@ -37,5 +44,11 @@
 </div>
 <dialog id="site-dialog"><form id="site-form"><div class="dialog-heading"><h2>新建网站</h2><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div><label>域名<input name="domain" placeholder="example.com" required maxlength="253" autocapitalize="none"></label><label>站点类型<select name="kind" id="site-kind"><option value="static">静态网站</option><option value="proxy">反向代理</option></select></label><label id="port-label" hidden>本机应用端口<input name="port" type="number" min="1024" max="65535" placeholder="3000"></label><p class="muted small-text">静态文件目录：/var/www/ubuntu-node/域名<br>反向代理仅连接 127.0.0.1；面板端口 8888 不可代理。</p><p id="site-error" class="error" role="alert"></p><button class="primary" type="submit">创建网站</button></form></dialog>
 <dialog id="logs-dialog" class="logs-dialog"><div class="dialog-heading"><h2 id="logs-title">服务日志</h2><button class="close-dialog icon-button" aria-label="关闭">×</button></div><pre id="log-output"></pre></dialog>
+<dialog id="firewall-dialog"><form id="firewall-form"><div class="dialog-heading"><h2 id="firewall-dialog-title">添加规则</h2><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div>
+<label>协议<select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+<label>端口<input name="port" type="number" min="1" max="65535" required placeholder="例如 443"></label>
+<label>来源 IPv4 / CIDR<input name="source" value="0.0.0.0/0" required maxlength="32" placeholder="0.0.0.0/0 表示任意来源"></label>
+<label>动作<select name="verdict"><option value="ACCEPT">允许</option><option value="DROP">阻止</option></select></label>
+<label>备注<input name="note" maxlength="80" placeholder="可选"></label><p class="muted small-text">添加到编辑列表后，点击“保存并应用”才会生效。规则从上到下匹配。</p><button class="primary" type="submit">确认编辑</button></form></dialog>
 <div id="toast" role="status" hidden></div>
 </body></html>

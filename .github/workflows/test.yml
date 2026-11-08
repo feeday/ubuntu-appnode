@@ -39,12 +39,13 @@ jobs:
       fail-fast: false
       matrix:
         version: ['22.04', '24.04']
+        capability: ['', '--cap-add=NET_ADMIN']
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Test real Ubuntu container without systemd
         run: |
-          docker run --name ubuntu-node-test -v "$PWD:/src:ro" -w /src ubuntu:${{ matrix.version }} bash -c '
+          docker run ${{ matrix.capability }} --name ubuntu-node-test -v "$PWD:/src:ro" -w /src ubuntu:${{ matrix.version }} bash -c '
             apt-get update && apt-get install -y python3 sudo &&
             /usr/bin/python3 scripts/integration.py'
       - name: Container diagnostics on failure

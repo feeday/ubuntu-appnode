@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore Ubuntu Node managed IPv4 firewall rules
+After=network-pre.target ufw.service netfilter-persistent.service ssh.service ssh.socket
+Before=ubuntu-node.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ubuntu-node-firewall-restore
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

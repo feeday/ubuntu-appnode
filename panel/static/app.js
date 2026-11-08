@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let csrf = '', view = 'overview', timer, metricBusy = false;
-const titles = {overview:'概览',sites:'网站管理',services:'系统服务',audit:'操作日志'};
+const titles = {overview:'概览',sites:'网站管理',services:'系统服务',audit:'操作日志',firewall:'防火墙'};
 function text(id, value) { $(id).textContent = value; }
 function bytes(value) { const units=['B','KB','MB','GB','TB']; let n=Number(value), i=0; while(n>=1024&&i<4){n/=1024;i++;} return n.toFixed(i?1:0)+' '+units[i]; }
 function toast(message, error=false) { text('toast',message); $('toast').classList.toggle('error-toast',error); $('toast').hidden=false; clearTimeout(toast.timeout); toast.timeout=setTimeout(()=>$('toast').hidden=true,6000); }
@@ -11,10 +11,10 @@ async function api(path, method='GET', data) {
   if(!response.ok){if(response.status===401 && path!=='login')showLogin();throw new Error(result.error||'请求失败');}
   return result;
 }
-function showLogin(){clearInterval(timer);$('shell').hidden=true;$('login').hidden=false;csrf='';document.querySelectorAll('dialog[open]').forEach(d=>d.close());}
+function showLogin(){firewallState=null;firewallDraft=[];firewallDirty=false;clearInterval(timer);$('shell').hidden=true;$('login').hidden=false;csrf='';document.querySelectorAll('dialog[open]').forEach(d=>d.close());}
 function loggedIn(data){csrf=data.csrf;text('username',data.user);$('login').hidden=true;$('shell').hidden=false;switchView(view);clearInterval(timer);timer=setInterval(()=>{if(view==='overview'&&!document.hidden)refreshMetrics();},5000);}
 async function busy(button, callback){button.disabled=true;try{await callback();}catch(error){toast(error.message,true);}finally{button.disabled=false;}}
-async function switchView(next){view=next;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!=='view-'+next);document.querySelectorAll('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===next));text('breadcrumb',titles[next]);$('sidebar').classList.remove('open');$('menu').setAttribute('aria-expanded','false');try{if(next==='overview')await refreshMetrics();if(next==='sites')await loadSites();if(next==='services')await loadServices();if(next==='audit')await loadAudit();}catch(error){toast(error.message,true);}}
+async function switchView(next){view=next;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!=='view-'+next);document.querySelectorAll('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===next));text('breadcrumb',titles[next]);$('sidebar').classList.remove('open');$('menu').setAttribute('aria-expanded','false');try{if(next==='overview')await refreshMetrics();if(next==='sites')await loadSites();if(next==='services')await loadServices();if(next==='audit')await loadAudit();if(next==='firewall')await loadFirewall();}catch(error){toast(error.message,true);}}
 async function refreshMetrics(){if(metricBusy)return;metricBusy=true;try{const data=await api('metrics');text('host',data.host);text('host-detail','Linux '+data.kernel+' · '+data.cores+' 核心');text('connection','已连接');text('cpu',data.cpu.toFixed(1)+'%');$('cpu-bar').value=data.cpu;text('cores',data.cores+' 个逻辑核心');for(const name of ['memory','disk']){text(name,data[name].percent.toFixed(1)+'%');$(name+'-bar').value=data[name].percent;text(name+'-size',bytes(data[name].used)+' / '+bytes(data[name].total));}const days=Math.floor(data.uptime/86400),hours=Math.floor(data.uptime%86400/3600);text('uptime',days+'天 '+hours+'时');text('load','平均负载 '+data.load.map(x=>x.toFixed(2)).join(' / '));text('net-in',bytes(data.network.received));text('net-out',bytes(data.network.sent));text('updated','更新于 '+new Date().toLocaleTimeString()+' · 每 5 秒更新');}catch(error){text('connection','连接中断');text('updated','数据更新失败：'+error.message+' · 页面可能显示上次数据');}finally{metricBusy=false;}}
 function node(tag,value,className){const el=document.createElement(tag);if(value!==undefined)el.textContent=value;if(className)el.className=className;return el;}
 function table(target,headers){const el=node('table'),head=node('thead'),row=node('tr'),body=node('tbody');headers.forEach(h=>row.append(node('th',h)));head.append(row);el.append(head,body);$(target).replaceChildren(el);return body;}
@@ -36,3 +36,29 @@ $('site-kind').addEventListener('change',()=>{const proxy=$('site-kind').value==
 $('site-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.target,submit=form.querySelector('[type=submit]');submit.disabled=true;text('site-error','');try{await api('sites','POST',{domain:form.elements.domain.value.trim().toLowerCase(),kind:form.elements.kind.value,port:Number(form.elements.port.value)});$('site-dialog').close();form.reset();$('port-label').hidden=true;form.elements.port.required=false;toast('网站配置已保存，Nginx 已收到重载请求');await loadSites();}catch(error){text('site-error',error.message);}finally{submit.disabled=false;}});
 document.querySelectorAll('.close-dialog').forEach(el=>el.addEventListener('click',()=>el.closest('dialog').close()));
 api('session').then(loggedIn).catch(showLogin);
+
+let firewallState=null, firewallDraft=[], firewallEdit=-1, firewallDirty=false;
+function markFirewallDirty(){firewallDirty=true;text('firewall-dirty','有未保存修改 · 点击保存后生效');renderFirewall();}
+async function loadFirewall(){
+  if(firewallDirty&&!confirm('刷新将放弃未保存的防火墙修改，继续？'))return;
+  const data=await api('firewall');firewallState=data;firewallDraft=data.rules.map(r=>({...r}));firewallDirty=false;
+  text('firewall-status',data.available?'iptables 可用 · IPv4 入站规则':data.reason);
+  text('firewall-protected','保护 TCP 端口：'+data.protected_ports.join('、')+'；本机回环与已建立连接不受本面板阻止规则影响。');
+  text('firewall-system',data.system_rules||'无法读取');text('firewall-active',data.active_rules||'尚未创建管理链');text('firewall-dirty','暂无未保存修改');
+  $('new-firewall-rule').disabled=!data.available;$('save-firewall').disabled=!data.available;renderFirewall();
+}
+function editFirewall(index=-1){firewallEdit=index;const form=$('firewall-form');form.reset();if(index>=0){for(const [key,value] of Object.entries(firewallDraft[index])){if(form.elements[key])form.elements[key].value=value;}}text('firewall-dialog-title',index<0?'添加规则':'编辑规则');$('firewall-dialog').showModal();}
+function renderFirewall(){
+  if(!firewallDraft.length){empty('firewall-list','暂无自定义规则','系统已有防火墙仍然有效。');return;}
+  const body=table('firewall-list',['顺序','协议 / 端口','来源','动作','备注','操作']);
+  firewallDraft.forEach((rule,index)=>{const row=node('tr');cell(row,String(index+1));cell(row,rule.protocol.toUpperCase()+' / '+rule.port);cell(row,rule.source);cell(row,rule.verdict==='ACCEPT'?'允许':'阻止');cell(row,rule.note);const actions=cell(row);actions.className='actions';
+    if(firewallState.available){actions.append(button('编辑',async()=>editFirewall(index)),button('删除',async()=>{firewallDraft.splice(index,1);markFirewallDirty();},true));
+      if(index>0)actions.append(button('↑',async()=>{[firewallDraft[index-1],firewallDraft[index]]=[firewallDraft[index],firewallDraft[index-1]];markFirewallDirty();}));
+      if(index<firewallDraft.length-1)actions.append(button('↓',async()=>{[firewallDraft[index+1],firewallDraft[index]]=[firewallDraft[index],firewallDraft[index+1]];markFirewallDirty();}));}
+    body.append(row);});
+}
+$('new-firewall-rule').addEventListener('click',()=>{if(firewallDraft.length>=32){toast('最多 32 条规则',true);return;}editFirewall();});
+$('refresh-firewall').addEventListener('click',()=>busy($('refresh-firewall'),loadFirewall));
+$('firewall-form').addEventListener('submit',event=>{event.preventDefault();const f=event.target.elements;const rule={protocol:f.protocol.value,port:Number(f.port.value),source:f.source.value.trim(),verdict:f.verdict.value,note:f.note.value.trim()};if(rule.protocol==='tcp'&&rule.verdict==='DROP'&&firewallState.protected_ports.includes(rule.port)){toast('这是 SSH 或面板保护端口，不能阻止',true);return;}if(firewallEdit<0)firewallDraft.push(rule);else firewallDraft[firewallEdit]=rule;$('firewall-dialog').close();markFirewallDirty();});
+$('save-firewall').addEventListener('click',()=>busy($('save-firewall'),async()=>{if(!firewallState?.available)return;if(!confirm('立即应用 '+firewallDraft.length+' 条 IPv4 入站规则？阻止规则会影响新的访问连接。'))return;await api('firewall','POST',{version:firewallState.version,rules:firewallDraft});firewallDirty=false;toast('防火墙规则已应用并保存');await loadFirewall();}));
+window.addEventListener('beforeunload',event=>{if(firewallDirty){event.preventDefault();event.returnValue='';}});

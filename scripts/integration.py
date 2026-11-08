@@ -114,6 +114,28 @@ finally:
     api('sites/proxy-test.example.com/delete', {})
     server.shutdown()
 assert any(row['action'] == 'create_site' for row in api('audit')['entries'])
+fw = api('firewall')
+if fw['available']:
+    rule = {'protocol': 'tcp', 'port': 18081, 'source': '203.0.113.0/24', 'verdict': 'DROP', 'note': 'CI'}
+    api('firewall', {'version': fw['version'], 'rules': [rule]})
+    current = api('firewall')
+    assert current['rules'] == [rule]
+    check = ['sudo', '/usr/sbin/iptables', '-C', 'UNODE_INPUT', '-p', 'tcp', '-s', '203.0.113.0/24', '--dport', '18081', '-j', 'DROP']
+    subprocess.run(check, check=True)
+    api('firewall', {'version': current['version'], 'rules': [{**rule, 'port': 22}]}, expected=400)
+    api('firewall', {'version': current['version'], 'rules': [{**rule, 'source': ';id'}]}, expected=400)
+    api('firewall', {'version': fw['version'], 'rules': []}, expected=400)
+    # Remove the chain as though the kernel had restarted, then restore saved rules.
+    subprocess.run(['sudo', '/usr/sbin/iptables', '-D', 'INPUT', '-j', 'UNODE_INPUT'], check=True)
+    subprocess.run(['sudo', '/usr/sbin/iptables', '-F', 'UNODE_INPUT'], check=True)
+    subprocess.run(['sudo', '/usr/sbin/iptables', '-X', 'UNODE_INPUT'], check=True)
+    subprocess.run(['sudo', '/usr/local/libexec/ubuntu-node-firewall-restore'], check=True)
+    subprocess.run(check, check=True)
+    api('firewall', {'version': current['version'], 'rules': []})
+    assert api('firewall')['rules'] == []
+else:
+    assert fw['reason']
+    api('firewall', {'version': fw['version'], 'rules': []}, expected=400)
 api('logout', {})
 api('metrics', expected=401)
 print('Ubuntu installation, upgrade, authentication, privilege boundary, static/proxy sites: PASS')

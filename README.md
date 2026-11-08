@@ -12,6 +12,7 @@
 - systemd 服务状态、启动 / 停止 / 重启、最近 100 条 journal 日志。
 - Nginx 静态站点、本机 HTTP 反向代理、站点列表与移除。
 - Nginx 修改前检测同名配置，修改后 `nginx -t`，检查或重载失败时恢复配置。
+- iptables IPv4 入站规则网页编辑：新增、修改、删除、排序、保存、重启恢复与只读系统规则查看。
 - 登录和管理操作审计；页面显示最近 100 条，数据库保留完整记录。
 - Ubuntu 安装脚本、systemd 服务、受限 root 助手和双版本 CI。
 
@@ -35,7 +36,7 @@ sudo bash install.sh
 ssh -L 8888:127.0.0.1:8888 用户名@服务器IP
 ```
 
-保持 SSH 窗口打开，在浏览器访问 **http://127.0.0.1:8888**。Windows PowerShell 自带 OpenSSH 的系统也可使用这条命令。无需开放公网 8888 端口。脚本不修改防火墙或 SSH 配置。
+保持 SSH 窗口打开，在浏览器访问 **http://127.0.0.1:8888**。Windows PowerShell 自带 OpenSSH 的系统也可使用这条命令。无需开放公网 8888 端口。首次安装不添加防火墙规则，也不修改 SSH 配置；升级或重启时会恢复你在面板保存的防火墙规则。
 
 自动化安装可通过标准输入提供密码：`sudo bash install.sh --password-stdin`，仅首次安装读取一行密码。不要把真实密码写入仓库或命令历史。
 
@@ -84,6 +85,28 @@ sudo supervisorctl -c /etc/ubuntu-node/supervisord.conf start all
 服务白名单：`nginx`、`ssh`、`cron`、`mysql`、`mariadb`、`redis-server`、`php8.1-fpm`、`php8.3-fpm`。停止 SSH 或 Web 服务可能影响连接，请确认操作对象。
 
 站点配置保存在 `/etc/nginx/conf.d/ubuntu-node-域名.conf`。面板只管理带有自身元数据标记的文件。请勿手工去掉第一行标记；对于手工配置的同名站点，先自行迁移。通配符或正则 server_name 冲突仍需管理员排查。
+
+## iptables 防火墙网页编辑
+
+左侧“防火墙”支持新增、编辑、删除和上下移动规则，最后点击“保存并应用”统一生效。每条规则包括：TCP / UDP、单个目标端口、来源 IPv4 / CIDR、允许 / 阻止和备注，最多 32 条。编辑是草稿，保存前不会改变服务器；其他会话已修改时会拒绝覆盖，需先刷新。
+
+- 本版仅控制 **IPv4 的 INPUT 入站流量**，不控制 IPv6、OUTPUT、FORWARD、Docker 端口映射或云安全组。IPv6 访问需要另行配置。
+- 管理链名为 `UNODE_INPUT`，挂在 INPUT 首部。只替换自己的链，保留原 INPUT 策略、UFW 和其他链。若同名链不是本面板创建的，会拒绝覆盖。
+- 规则从上到下匹配；允许规则使用 ACCEPT，可优先于后续系统规则放行；阻止使用 DROP；未匹配流量继续走系统原有规则。与 UFW 等其他管理工具混用时，它们重载可能改变挂载关系，可从页面只读规则检查并重新保存。
+- 本机回环、已建立连接，以及 TCP 22、8888 和检测到的 SSH / systemd 监听端口先返回原系统规则，不受本面板阻止规则影响。这不会绕过系统原有的限制。
+- 不提供任意 iptables 命令执行、全局清空或默认 DROP 政策编辑。
+- 参数校验后批量应用；应用或持久化失败会尝试恢复旧规则，回滚失败会明确报错。
+- 规则保存在 root 拥有的 `/etc/ubuntu-node/firewall.json`；systemd 主机由 `ubuntu-node-firewall.service` 恢复，容器由 Supervisor 的 `firewall-restore` 恢复。
+
+**容器权限限制：** `sudo` / root 不等于拥有网络管理能力。缺少 `CAP_NET_ADMIN` 的工作区可以查看页面和已保存配置，但不能修改内核防火墙，页面会显示原因。自建 Docker 容器可在启动时添加 `--cap-add=NET_ADMIN`；不要挂载宿主机网络来规避限制。云工作区是否允许该权限由平台决定。
+
+如需从服务器控制台解除本面板规则：
+
+```bash
+sudo iptables -D INPUT -j UNODE_INPUT
+```
+
+这仅临时断开管理链；如需重启后也不恢复，先备份并移走 `/etc/ubuntu-node/firewall.json`。不清空系统其他规则。
 
 ## 升级、密码与日志
 
@@ -149,6 +172,8 @@ systemd 环境先停用面板：
 ```bash
 sudo systemctl disable --now ubuntu-node
 ```
+
+卸载防火墙功能前，应先在面板删除全部自定义规则并保存，再禁用 `ubuntu-node-firewall.service`（systemd）或移除 Supervisor 的 `firewall-restore` 配置。
 
 容器环境停用：`sudo supervisorctl -c /etc/ubuntu-node/supervisord.conf shutdown`（同时停止本面板托管的 Nginx）。
 

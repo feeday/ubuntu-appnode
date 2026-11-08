@@ -32,7 +32,7 @@ class AuthenticationTests(unittest.TestCase):
         return {'X-CSRF-Token': response.json['csrf']}
 
     def test_all_api_reads_require_auth(self):
-        for url in ('metrics', 'sites', 'services', 'audit', 'session', 'logs/nginx'):
+        for url in ('metrics', 'sites', 'services', 'audit', 'session', 'logs/nginx', 'firewall'):
             self.assertEqual(self.client.get('/api/' + url).status_code, 401)
 
     def test_csrf_and_logout(self):
@@ -224,6 +224,63 @@ class SupervisorTests(unittest.TestCase):
     def test_reload_uses_nginx_signal(self, run, _mode):
         helper.reload_nginx()
         run.assert_called_once_with(['/usr/sbin/nginx', '-s', 'reload'])
+
+
+class FirewallTests(unittest.TestCase):
+    def test_invalid_rules_and_protected_ports(self):
+        base = {'protocol': 'tcp', 'port': 443, 'source': '0.0.0.0/0', 'verdict': 'DROP'}
+        for change in ({'port': 22}, {'port': 8888}, {'port': True}, {'source': '::/0'},
+                       {'source': '1.2.3.4;id'}, {'verdict': 'EXEC'}, {'protocol': 'all'}, {'note': 'a\nb'}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                helper.firewall_rules([{**base, **change}], [22, 8888])
+        self.assertEqual(helper.firewall_rules([{**base, 'source': '192.0.2.5'}], [22])[0]['source'], '192.0.2.5/32')
+
+    def test_script_only_flushes_owned_chain_and_preserves_connections(self):
+        rule = helper.firewall_rules([{'protocol': 'udp', 'port': 53, 'source': '0.0.0.0/0', 'verdict': 'ACCEPT'}], [22])
+        script = helper.firewall_script(rule, [22, 8888])
+        self.assertIn('-F UNODE_INPUT', script)
+        self.assertNotIn('-F INPUT', script)
+        self.assertNotIn('-P INPUT', script)
+        self.assertLess(script.index('ESTABLISHED,RELATED'), script.index('--dport 53'))
+        self.assertIn('--comment ubuntu-node-managed', script)
+
+    @patch.object(helper, 'run')
+    def test_custom_ssh_port_protected(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, 'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=12,fd=3))', '')
+        self.assertIn(2222, helper.protected_ports())
+
+    @patch.object(helper, 'protected_ports', return_value=[22, 8888])
+    @patch.object(helper, 'firewall_probe', return_value=(True, '', ''))
+    @patch.object(helper, 'firewall_saved', return_value=([], 'version'))
+    @patch.object(helper, 'firewall_apply')
+    def test_stale_edit_is_rejected(self, apply, *_args):
+        with self.assertRaisesRegex(ValueError, '其他会话'):
+            helper.firewall_dispatch({'action': 'firewall_save', 'version': 'stale', 'rules': []})
+        apply.assert_not_called()
+
+    @patch.object(helper, 'firewall_saved', return_value=([], 'version'))
+    @patch.object(helper, 'firewall_probe', return_value=(False, 'CAP_NET_ADMIN unavailable', ''))
+    def test_unprivileged_container_is_readable(self, *_args):
+        result = helper.firewall_dispatch({'action': 'firewall'})
+        self.assertFalse(result['available'])
+        with self.assertRaisesRegex(ValueError, 'CAP_NET_ADMIN'):
+            helper.firewall_dispatch({'action': 'firewall_save', 'rules': []})
+
+    @patch.object(helper, 'run')
+    def test_foreign_chain_not_overwritten(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, '-N UNODE_INPUT', '')
+        with self.assertRaisesRegex(ValueError, '拒绝覆盖'):
+            helper.firewall_apply([], [22])
+
+    @patch.object(helper, 'protected_ports', return_value=[22])
+    @patch.object(helper, 'firewall_probe', return_value=(True, '', ''))
+    @patch.object(helper, 'firewall_saved', return_value=([], 'version'))
+    @patch.object(helper, 'write_atomic', side_effect=OSError('disk full'))
+    @patch.object(helper, 'firewall_apply')
+    def test_disk_failure_restores_old_rules(self, apply, *_args):
+        with self.assertRaises(OSError):
+            helper.firewall_dispatch({'action': 'firewall_save', 'version': 'version', 'rules': []})
+        self.assertEqual(apply.call_count, 2)
 
 
 if __name__ == '__main__':

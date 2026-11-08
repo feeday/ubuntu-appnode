@@ -22,7 +22,7 @@ case "${1:-}" in
 esac
 [[ $# -le 1 ]] || exit 1
 src=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for file in panel/app.py panel/admin.py panel/wsgi.py panel/templates/index.html panel/static/app.js deploy/helper.py deploy/ubuntu-node.service deploy/supervisord.conf; do
+for file in panel/app.py panel/admin.py panel/wsgi.py panel/templates/index.html panel/static/app.js deploy/helper.py deploy/ubuntu-node.service deploy/supervisord.conf deploy/firewall-restore.sh deploy/ubuntu-node-firewall.service; do
   [[ -f "$src/$file" ]] || { echo "缺少源文件 $file，请克隆完整仓库。"; exit 1; }
 done
 mkdir -p /run/lock
@@ -45,7 +45,7 @@ if [[ ! -f /var/lib/ubuntu-node/panel.db ]]; then
 fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-packages=(python3 python3-flask python3-psutil gunicorn sudo nginx ca-certificates)
+packages=(python3 python3-flask python3-psutil gunicorn sudo nginx ca-certificates iptables iproute2)
 [[ $runtime != supervisor ]] || packages+=(supervisor)
 apt-get install -y "${packages[@]}" 9>&-
 if ! id ubuntu-node >/dev/null 2>&1; then
@@ -88,13 +88,17 @@ if [[ ! -f /var/lib/ubuntu-node/panel.db ]]; then
   printf '%s\n' "$initial_password" | runuser -u ubuntu-node -- /usr/bin/python3 -m panel.admin --password-stdin
 fi
 unset initial_password
+install -o root -g root -m 755 "$src/deploy/firewall-restore.sh" /usr/local/libexec/ubuntu-node-firewall-restore
 install -d -o root -g root -m 755 /etc/ubuntu-node
 printf '%s\n' "$runtime" > /etc/ubuntu-node/runtime
 chmod 644 /etc/ubuntu-node/runtime
 /usr/sbin/nginx -t
 if [[ $runtime == systemd ]]; then
   install -m 644 "$src/deploy/ubuntu-node.service" /etc/systemd/system/ubuntu-node.service
+  install -m 644 "$src/deploy/ubuntu-node-firewall.service" /etc/systemd/system/ubuntu-node-firewall.service
   systemctl daemon-reload
+  systemctl enable ubuntu-node-firewall.service
+  systemctl restart ubuntu-node-firewall.service
   systemctl enable --now nginx.service ubuntu-node.service
   systemctl is-active --quiet ubuntu-node.service
 else

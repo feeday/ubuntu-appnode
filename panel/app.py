@@ -154,6 +154,18 @@ def create_app(test_config=None):
         except (OSError, ValueError) as error:
             raise RuntimeError('系统助手返回异常') from error
 
+    @app.get('/api/firewall')
+    def firewall():
+        return system_action({'action': 'firewall'}, False)
+
+    @app.post('/api/firewall')
+    def save_firewall():
+        data = request.get_json()
+        if not isinstance(data, dict):
+            return jsonify(error='请求格式错误'), 400
+        return system_action({'action': 'firewall_save', 'rules': data.get('rules'),
+                              'version': data.get('version')})
+
     @app.get('/api/services')
     def services():
         return system_action({'action': 'services'}, False)

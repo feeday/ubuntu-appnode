@@ -1,6 +1,8 @@
 #!/usr/bin/python3 -I
 """Root-owned, fixed-argument sudo entrypoint. Never invokes a shell."""
 import fcntl
+import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -107,10 +109,141 @@ def metadata(path):
     return json.loads(first[len('# ubuntu-node '):])
 
 
+FIREWALL_STATE = Path('/etc/ubuntu-node/firewall.json')
+FIREWALL_CHAIN = 'UNODE_INPUT'
+
+
+def firewall_saved():
+    raw = FIREWALL_STATE.read_text() if FIREWALL_STATE.exists() else '[]'
+    rules = json.loads(raw)
+    return rules, hashlib.sha256(raw.encode()).hexdigest()
+
+
+def firewall_probe():
+    try:
+        result = run(['/usr/sbin/iptables', '-w', '3', '-S', 'INPUT'], check=False)
+        if result.returncode:
+            return False, '当前环境无 iptables 管理权限（通常缺少 CAP_NET_ADMIN）。', ''
+        return True, '', result.stdout
+    except OSError:
+        return False, 'iptables 未安装，请更新并重新运行安装脚本。', ''
+
+
+def protected_ports():
+    ports = {22, 8888}
+    # Also preserve custom SSH listeners, including systemd socket activation.
+    result = run(['/usr/bin/ss', '-H', '-lntp'])
+    for line in result.stdout.splitlines():
+        if 'sshd' in line or '"systemd"' in line:
+            fields = line.split()
+            if len(fields) >= 4:
+                value = fields[3].rsplit(':', 1)[-1]
+                if value.isdigit():
+                    ports.add(int(value))
+    return sorted(ports)
+
+
+def firewall_rules(value, ports):
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValueError('最多允许 32 条规则')
+    rules = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError('规则格式错误')
+        protocol, verdict, port = item.get('protocol'), item.get('verdict'), item.get('port')
+        if protocol not in ('tcp', 'udp') or verdict not in ('ACCEPT', 'DROP'):
+            raise ValueError('只允许 TCP/UDP 和允许/阻止操作')
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError('端口必须为 1–65535 的整数')
+        if protocol == 'tcp' and verdict == 'DROP' and port in ports:
+            raise ValueError('禁止阻止 SSH 或面板保护端口：' + str(port))
+        source = item.get('source', '0.0.0.0/0')
+        try:
+            source = str(ipaddress.IPv4Network(source, strict=False)) if isinstance(source, str) else None
+        except ValueError:
+            source = None
+        if source is None:
+            raise ValueError('来源必须是 IPv4 地址或 CIDR 网段')
+        note = item.get('note', '')
+        if not isinstance(note, str) or len(note) > 80 or any(ord(c) < 32 for c in note):
+            raise ValueError('备注最多 80 字且不能包含控制字符')
+        rules.append({'protocol': protocol, 'verdict': verdict, 'port': port, 'source': source, 'note': note})
+    return rules
+
+
+def firewall_script(rules, ports):
+    lines = ['*filter', '-F ' + FIREWALL_CHAIN,
+             f'-A {FIREWALL_CHAIN} -i lo -j RETURN',
+             f'-A {FIREWALL_CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN']
+    for port in ports:
+        lines.append(f'-A {FIREWALL_CHAIN} -p tcp --dport {port} -j RETURN')
+    for rule in rules:
+        lines.append(f'-A {FIREWALL_CHAIN} -p {rule["protocol"]} -s {rule["source"]} --dport {rule["port"]} -j {rule["verdict"]}')
+    lines.extend([f'-A {FIREWALL_CHAIN} -m comment --comment ubuntu-node-managed -j RETURN', 'COMMIT', ''])
+    return '\n'.join(lines)
+
+
+def firewall_apply(rules, ports):
+    # Only our own chain is flushed. Existing INPUT policy and third-party chains stay intact.
+    existing = run(['/usr/sbin/iptables', '-w', '3', '-S', FIREWALL_CHAIN], check=False)
+    created = existing.returncode != 0
+    if created:
+        run(['/usr/sbin/iptables', '-w', '3', '-N', FIREWALL_CHAIN])
+    elif 'ubuntu-node-managed' not in existing.stdout:
+        raise ValueError('同名链不属于本面板，拒绝覆盖')
+    script = firewall_script(rules, ports)
+    result = subprocess.run(['/usr/sbin/iptables-restore', '--wait', '3', '--noflush'],
+                            input=script, text=True, capture_output=True, timeout=15,
+                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'})
+    if result.returncode:
+        if created:
+            run(['/usr/sbin/iptables', '-w', '3', '-X', FIREWALL_CHAIN], check=False)
+        raise ValueError('规则应用失败：' + result.stderr[-2000:])
+    if run(['/usr/sbin/iptables', '-w', '3', '-C', 'INPUT', '-j', FIREWALL_CHAIN], check=False).returncode:
+        run(['/usr/sbin/iptables', '-w', '3', '-I', 'INPUT', '1', '-j', FIREWALL_CHAIN])
+
+
+def firewall_dispatch(data):
+    saved, version = firewall_saved()
+    available, reason, system_rules = firewall_probe()
+    if data['action'] == 'firewall':
+        ports = protected_ports() if available else [22, 8888]
+        current = run(['/usr/sbin/iptables', '-w', '3', '-S', FIREWALL_CHAIN], check=False).stdout if available else ''
+        return {'available': available, 'reason': reason, 'rules': saved, 'version': version,
+                'protected_ports': ports, 'system_rules': system_rules[-24000:], 'active_rules': current[-24000:]}
+    # With no saved rules, boot restoration does not require network capabilities.
+    if data['action'] == 'firewall_restore' and not FIREWALL_STATE.exists():
+        return {'ok': True}
+    if not available:
+        raise ValueError(reason)
+    ports = protected_ports()
+    if data['action'] == 'firewall_save':
+        if data.get('version') != version:
+            raise ValueError('规则已被其他会话修改，请刷新后重试')
+        updated = firewall_rules(data.get('rules'), ports)
+    else:
+        # A newly detected SSH port supersedes an older deny rule at boot.
+        updated = firewall_rules([r for r in saved if not
+                                  (r.get('protocol') == 'tcp' and r.get('verdict') == 'DROP' and r.get('port') in ports)], ports)
+    try:
+        firewall_apply(updated, ports)
+        if data['action'] == 'firewall_save':
+            write_atomic(FIREWALL_STATE, json.dumps(updated, ensure_ascii=False))
+    except Exception as error:
+        try:
+            firewall_apply(saved, ports)
+        except Exception as rollback_error:
+            raise ValueError(f'{error}；回滚失败，请通过服务器控制台检查：{rollback_error}') from error
+        raise
+    return {'ok': True}
+
+
 def dispatch(data):
     if not isinstance(data, dict):
         raise ValueError('请求必须为对象')
     action = data.get('action')
+    if action in ('firewall', 'firewall_save', 'firewall_restore'):
+        return firewall_dispatch(data)
     if action == 'services':
         if runtime() == 'supervisor':
             result = supervisor('status', check=False)
