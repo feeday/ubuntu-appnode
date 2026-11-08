@@ -1,0 +1,22 @@
+[Unit]
+Description=Ubuntu Node server management panel
+After=network.target nginx.service
+
+[Service]
+Type=simple
+User=ubuntu-node
+Group=ubuntu-node
+WorkingDirectory=/opt/ubuntu-node
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=UBUNTU_NODE_STATE=/var/lib/ubuntu-node
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8888 --workers 1 --threads 4 --timeout 90 --access-logfile - --error-logfile - panel.wsgi:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+# sudo is intentional: a root-owned, no-argument helper implements a fixed allowlist.
+# Do not set NoNewPrivileges or ProtectSystem here: that also disables helper writes.
+
+[Install]
+WantedBy=multi-user.target

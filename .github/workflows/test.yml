@@ -1,0 +1,34 @@
+name: Ubuntu validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-flask python3-psutil
+      - name: Syntax and security regression tests
+        run: |
+          bash -n install.sh
+          node --check panel/static/app.js
+          /usr/bin/python3 -m compileall -q panel deploy scripts
+          /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Install and exercise real systemd and Nginx
+        run: /usr/bin/python3 scripts/integration.py
+      - name: Service diagnostics on failure
+        if: failure()
+        run: |
+          sudo systemctl status ubuntu-node nginx --no-pager || true
+          sudo journalctl -u ubuntu-node -u nginx --no-pager -n 100 || true

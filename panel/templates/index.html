@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ubuntu Node · 服务器管理</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
+<body>
+<section id="login" class="login-shell" hidden>
+  <form id="login-form" class="login-card">
+    <div class="brand-mark">u<span>n</span></div><p class="eyebrow">YOUR SERVER, IN FOCUS</p><h1>欢迎回来</h1><p class="muted">登录 Ubuntu Node，管理你的服务器。</p>
+    <label>管理员<input name="username" value="admin" autocomplete="username" required maxlength="64"></label>
+    <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+    <p id="login-error" class="error" role="alert"></p><button class="primary" type="submit">登录控制台 <span>↗</span></button>
+    <p class="login-foot">Ubuntu 原生 · 独立开源项目</p>
+  </form>
+</section>
+<div id="shell" class="shell" hidden>
+  <aside id="sidebar">
+    <a class="brand" href="/"><span class="brand-mark small">u<span>n</span></span><span>Ubuntu Node<small>SERVER CONSOLE</small></span></a>
+    <div class="nav-label">工作空间</div>
+    <nav aria-label="主导航"><button class="nav active" data-view="overview"><span>◈</span>概览</button><button class="nav" data-view="sites"><span>▦</span>网站管理</button><button class="nav" data-view="services"><span>☷</span>系统服务</button><button class="nav" data-view="audit"><span>≡</span>操作日志</button></nav>
+    <div class="side-bottom"><span class="dot"></span> 本机节点<small>Ubuntu Node · v0.1.0</small></div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="crumb"><button id="menu" class="icon-button" aria-label="展开或收起导航" aria-expanded="false">☰</button><span>工作空间</span><span class="slash">/</span><strong id="breadcrumb">概览</strong></div><div class="account"><span id="username">admin</span><button id="logout" class="text-button">退出登录</button></div></header>
+    <div class="content">
+      <section id="view-overview" class="view">
+        <div class="page-heading"><div><p class="eyebrow">SERVER OVERVIEW</p><h1>服务器概览<span class="live"><i></i>实时</span></h1><p class="muted">资源状态一目了然，让运维更从容。</p></div><button id="refresh" class="secondary">↻ 刷新数据</button></div>
+        <div class="host-banner"><div><span class="host-icon">▣</span><div><h2 id="host">正在连接…</h2><p id="host-detail">读取主机信息</p></div></div><div class="host-status"><span class="dot"></span><span id="connection">等待数据</span></div></div>
+        <div class="metrics"><article class="metric"><div class="metric-label">CPU 使用率 <span>◈</span></div><div class="metric-number" id="cpu">—</div><progress id="cpu-bar" value="0" max="100"></progress><p id="cores">—</p></article><article class="metric"><div class="metric-label">内存使用 <span>▥</span></div><div class="metric-number" id="memory">—</div><progress id="memory-bar" value="0" max="100"></progress><p id="memory-size">—</p></article><article class="metric"><div class="metric-label">磁盘使用 <span>◴</span></div><div class="metric-number" id="disk">—</div><progress id="disk-bar" value="0" max="100"></progress><p id="disk-size">—</p></article><article class="metric"><div class="metric-label">运行时间 <span>◷</span></div><div class="metric-number" id="uptime">—</div><div class="uptime-line">持续在线</div><p id="load">—</p></article></div>
+        <div class="overview-grid"><article class="card"><div class="card-title"><h2>网络流量</h2><span class="tag">开机累计</span></div><div class="network-row"><span class="network-icon">↓</span><div><p>接收数据</p><strong id="net-in">—</strong></div></div><div class="network-row"><span class="network-icon send">↑</span><div><p>发送数据</p><strong id="net-out">—</strong></div></div><p class="muted small-text">统计所有网络接口，重启后重新累计。</p></article><article class="card"><div class="card-title"><h2>开始管理</h2><span class="tag">快捷操作</span></div><button class="quick" data-view="sites"><span class="quick-icon">▦</span><span><strong>部署一个网站</strong><small>创建静态站点或本机反向代理</small></span><b>↗</b></button><button class="quick" data-view="services"><span class="quick-icon">☷</span><span><strong>查看系统服务</strong><small>检查状态、重启服务与读取日志</small></span><b>↗</b></button><div class="note">面板默认通过 SSH 隧道访问，管理端口无需暴露到公网。</div></article></div>
+        <p class="updated" id="updated">数据每 5 秒自动更新</p>
+      </section>
+      <section id="view-sites" class="view" hidden><div class="page-heading"><div><p class="eyebrow">WEBSITES</p><h1>网站管理</h1><p class="muted">管理本面板创建的 Nginx 站点。</p></div><button id="new-site" class="primary">＋ 新建网站</button></div><div class="card table-card"><div id="sites-list"></div></div><p class="muted small-text">首版提供 HTTP 站点。请在服务器安全组按需开放 80 端口；HTTPS 证书需另外配置。</p></section>
+      <section id="view-services" class="view" hidden><div class="page-heading"><div><p class="eyebrow">SYSTEM SERVICES</p><h1>系统服务</h1><p class="muted">管理预设服务；未安装的服务只显示状态。</p></div><button id="refresh-services" class="secondary">↻ 刷新状态</button></div><div class="card table-card"><div id="services-list"></div></div></section>
+      <section id="view-audit" class="view" hidden><div class="page-heading"><div><p class="eyebrow">ACTIVITY</p><h1>操作日志</h1><p class="muted">最近 100 条登录与管理操作。</p></div><button id="refresh-audit" class="secondary">↻ 刷新日志</button></div><div class="card table-card"><div id="audit-list"></div></div></section>
+      <footer>Ubuntu Node <span>独立开发 · 为 Ubuntu 而生</span></footer>
+    </div>
+  </main>
+</div>
+<dialog id="site-dialog"><form id="site-form"><div class="dialog-heading"><h2>新建网站</h2><button type="button" class="close-dialog icon-button" aria-label="关闭">×</button></div><label>域名<input name="domain" placeholder="example.com" required maxlength="253" autocapitalize="none"></label><label>站点类型<select name="kind" id="site-kind"><option value="static">静态网站</option><option value="proxy">反向代理</option></select></label><label id="port-label" hidden>本机应用端口<input name="port" type="number" min="1024" max="65535" placeholder="3000"></label><p class="muted small-text">静态文件目录：/var/www/ubuntu-node/域名<br>反向代理仅连接 127.0.0.1；面板端口 8888 不可代理。</p><p id="site-error" class="error" role="alert"></p><button class="primary" type="submit">创建网站</button></form></dialog>
+<dialog id="logs-dialog" class="logs-dialog"><div class="dialog-heading"><h2 id="logs-title">服务日志</h2><button class="close-dialog icon-button" aria-label="关闭">×</button></div><pre id="log-output"></pre></dialog>
+<div id="toast" role="status" hidden></div>
+</body></html>
