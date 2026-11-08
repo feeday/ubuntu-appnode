@@ -47,7 +47,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 packages=(python3 python3-flask python3-psutil gunicorn sudo nginx ca-certificates)
 [[ $runtime != supervisor ]] || packages+=(supervisor)
-apt-get install -y "${packages[@]}"
+apt-get install -y "${packages[@]}" 9>&-
 if ! id ubuntu-node >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/ubuntu-node --shell /usr/sbin/nologin ubuntu-node
 fi
@@ -104,7 +104,8 @@ else
     /usr/bin/supervisorctl -c /etc/ubuntu-node/supervisord.conf update
     /usr/bin/supervisorctl -c /etc/ubuntu-node/supervisord.conf start all
   else
-    /usr/bin/supervisord -c /etc/ubuntu-node/supervisord.conf
+    # A daemon must not inherit the installer lock descriptor.
+    /usr/bin/supervisord -c /etc/ubuntu-node/supervisord.conf 9>&-
   fi
 fi
 # Wait for HTTP readiness rather than equating a spawned process with a working panel.
