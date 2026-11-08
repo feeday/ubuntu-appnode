@@ -137,7 +137,9 @@ def dispatch(data):
         if kind == 'static':
             if root.is_symlink() or WWW.is_symlink():
                 raise ValueError('拒绝符号链接网站目录')
-            location = f'root {root};\n    index index.html;\n    location / {{ try_files $uri $uri/ =404; }}'
+            location = (f'root {root};\n    index index.html;\n'
+                        r'    location ~ /\.(?!well-known/) { deny all; }' + '\n'
+                        '    location / { try_files $uri $uri/ =404; }')
         elif kind == 'proxy':
             port = data.get('port')
             if type(port) is not int or not 1024 <= port <= 65535 or port == 8888:

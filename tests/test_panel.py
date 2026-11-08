@@ -142,6 +142,7 @@ class HelperTests(unittest.TestCase):
     def test_static_create_list_delete_preserves_content(self):
         self.create()
         self.assertTrue((self.www / 'example.com/index.html').exists())
+        self.assertIn('deny all;', helper.conf_path('example.com').read_text())
         self.assertEqual(helper.dispatch({'action': 'sites'})['sites'][0]['domain'], 'example.com')
         helper.dispatch({'action': 'delete_site', 'domain': 'example.com'})
         self.assertFalse(helper.conf_path('example.com').exists())

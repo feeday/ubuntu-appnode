@@ -71,6 +71,14 @@ def wait_site(domain, expected):
 api('sites', {'domain': 'node-test.example.com', 'kind': 'static'})
 try:
     wait_site('node-test.example.com', b'node-test.example.com')
+    subprocess.run(['sudo', 'tee', '/var/www/ubuntu-node/node-test.example.com/.env'],
+                   input='test fixture, not a secret', text=True, stdout=subprocess.DEVNULL, check=True)
+    hidden = urllib.request.Request('http://127.0.0.1/.env', headers={'Host': 'node-test.example.com'})
+    try:
+        urllib.request.urlopen(hidden)
+        raise AssertionError('Hidden files must not be served')
+    except urllib.error.HTTPError as error:
+        assert error.code == 403, error.code
     api('sites', {'domain': 'node-test.example.com', 'kind': 'static'}, expected=400)
     assert any(s['domain'] == 'node-test.example.com' for s in api('sites')['sites'])
 finally:
