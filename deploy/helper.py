@@ -24,6 +24,23 @@ def run(args, check=True):
     return result
 
 
+def runtime():
+    path = Path('/etc/ubuntu-node/runtime')
+    return path.read_text().strip() if path.exists() else 'systemd'
+
+
+def supervisor(operation, check=True):
+    return run(['/usr/bin/supervisorctl', '-c', '/etc/ubuntu-node/supervisord.conf',
+                operation, 'nginx'], check=check)
+
+
+def reload_nginx():
+    if runtime() == 'supervisor':
+        run(['/usr/sbin/nginx', '-s', 'reload'])
+    else:
+        run(['/usr/bin/systemctl', 'reload', 'nginx.service'])
+
+
 def domain_name(value):
     if not isinstance(value, str) or not DOMAIN.fullmatch(value):
         raise ValueError('请输入小写 ASCII 域名，例如 example.com；国际域名请使用 Punycode')
@@ -65,7 +82,7 @@ def apply_config(path, content):
         write_atomic(path, content)
     try:
         run(['/usr/sbin/nginx', '-t'])
-        run(['/usr/bin/systemctl', 'reload', 'nginx.service'])
+        reload_nginx()
         # Reload acknowledgment is asynchronous; new workers take over shortly.
     except Exception:
         if previous is None:
@@ -75,7 +92,7 @@ def apply_config(path, content):
         # Recover the prior running configuration if the first reload partially applied.
         try:
             run(['/usr/sbin/nginx', '-t'])
-            run(['/usr/bin/systemctl', 'reload', 'nginx.service'])
+            reload_nginx()
         except Exception:
             pass
         raise
@@ -95,6 +112,15 @@ def dispatch(data):
         raise ValueError('请求必须为对象')
     action = data.get('action')
     if action == 'services':
+        if runtime() == 'supervisor':
+            result = supervisor('status', check=False)
+            fields = result.stdout.split()
+            state = fields[1] if len(fields) > 1 and fields[0] == 'nginx' else 'UNKNOWN'
+            active = 'active' if state == 'RUNNING' else 'inactive' if state == 'STOPPED' else 'failed'
+            return {'runtime': 'supervisor', 'services': [
+                {'name': name, 'load': 'loaded' if name == 'nginx' else 'unsupported',
+                 'active': active if name == 'nginx' else 'unknown', 'sub': state if name == 'nginx' else '',
+                 'enabled': 'Supervisor' if name == 'nginx' else '容器模式不支持'} for name in SERVICES]}
         services = []
         for name in SERVICES:
             output = run(['/usr/bin/systemctl', 'show', name + '.service',
@@ -103,9 +129,17 @@ def dispatch(data):
             services.append({'name': name, 'load': props.get('LoadState', 'unknown'),
                              'active': props.get('ActiveState', 'unknown'),
                              'sub': props.get('SubState', ''), 'enabled': props.get('UnitFileState', '')})
-        return {'services': services}
+        return {'runtime': 'systemd', 'services': services}
     if action == 'logs':
         name = service_name(data.get('service'))
+        if runtime() == 'supervisor':
+            if name != 'nginx.service':
+                raise ValueError('容器模式只支持 Nginx 服务')
+            path = Path('/var/log/nginx/error.log')
+            if not path.exists():
+                return {'text': '暂无 Nginx 错误日志'}
+            output = run(['/usr/bin/tail', '-n', '100', str(path)])
+            return {'text': output.stdout[-60000:]}
         output = run(['/usr/bin/journalctl', '--unit=' + name, '--lines=100', '--no-pager', '--output=short-iso'])
         return {'text': output.stdout[-60000:]}
     if action == 'service':
@@ -113,7 +147,12 @@ def dispatch(data):
         operation = data.get('operation')
         if operation not in OPS:
             raise ValueError('不允许的服务操作')
-        run(['/usr/bin/systemctl', operation, name])
+        if runtime() == 'supervisor':
+            if name != 'nginx.service':
+                raise ValueError('容器模式只支持 Nginx 服务')
+            supervisor(operation)
+        else:
+            run(['/usr/bin/systemctl', operation, name])
         return {'ok': True}
     if action == 'sites':
         entries = []

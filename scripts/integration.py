@@ -37,7 +37,16 @@ else:
     raise RuntimeError('Panel did not become ready')
 csrf = api('login', {'username': 'admin', 'password': password})['csrf']
 assert api('metrics')['memory']['total'] > 0
-assert any(s['name'] == 'nginx' and s['active'] == 'active' for s in api('services')['services'])
+for _ in range(30):
+    if any(s['name'] == 'nginx' and s['active'] == 'active' for s in api('services')['services']):
+        break
+    time.sleep(0.2)
+else:
+    raise AssertionError('Nginx did not enter running state')
+api('services/nginx/stop', {})
+assert any(s['name'] == 'nginx' and s['active'] == 'inactive' for s in api('services')['services'])
+api('services/nginx/start', {})
+api('services/nginx/restart', {})
 assert 'text' in api('logs/nginx')
 for file in ('/opt/ubuntu-node/panel/app.py', '/usr/local/libexec/ubuntu-node-helper'):
     assert subprocess.run(['sudo', '-u', 'ubuntu-node', 'test', '-w', file]).returncode != 0

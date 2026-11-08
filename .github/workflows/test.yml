@@ -32,3 +32,25 @@ jobs:
         run: |
           sudo systemctl status ubuntu-node nginx --no-pager || true
           sudo journalctl -u ubuntu-node -u nginx --no-pager -n 100 || true
+
+  container:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['22.04', '24.04']
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test real Ubuntu container without systemd
+        run: |
+          docker run --name ubuntu-node-test -v "$PWD:/src:ro" -w /src ubuntu:${{ matrix.version }} bash -c '
+            apt-get update && apt-get install -y python3 sudo &&
+            /usr/bin/python3 scripts/integration.py'
+      - name: Container diagnostics on failure
+        if: failure()
+        run: |
+          docker cp ubuntu-node-test:/var/log/ubuntu-node-panel-error.log /tmp/panel-error.log || true
+          cat /tmp/panel-error.log || true
+          docker cp ubuntu-node-test:/var/log/ubuntu-node-supervisor.log /tmp/supervisor.log || true
+          cat /tmp/supervisor.log || true

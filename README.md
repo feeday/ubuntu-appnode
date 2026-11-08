@@ -17,7 +17,7 @@
 
 ## 安装
 
-适用于使用 systemd 的完整 Ubuntu 主机或虚拟机。建议先在新建测试服务器验证。现有 Nginx 配置会保留，但安装会启动 Nginx；如其他 Web 服务占用 80 端口，请先处理冲突。
+自动识别运行环境：完整 Ubuntu 主机使用 systemd；没有 systemd 的容器 / 云工作区使用独立 Supervisor，管理面板和 Nginx。建议先在新建测试服务器验证。现有 Nginx 配置会保留，但安装会启动 Nginx；如其他 Web 服务占用 80 端口，请先处理冲突。
 
 ```bash
 sudo apt-get update
@@ -38,6 +38,36 @@ ssh -L 8888:127.0.0.1:8888 用户名@服务器IP
 保持 SSH 窗口打开，在浏览器访问 **http://127.0.0.1:8888**。Windows PowerShell 自带 OpenSSH 的系统也可使用这条命令。无需开放公网 8888 端口。脚本不修改防火墙或 SSH 配置。
 
 自动化安装可通过标准输入提供密码：`sudo bash install.sh --password-stdin`，仅首次安装读取一行密码。不要把真实密码写入仓库或命令历史。
+
+## 容器 / 云工作区（没有 systemd）
+
+使用相同安装命令，无需安装或强行启动 systemd。安装脚本自动选择 Supervisor，面板仍以普通用户运行，管理接口仍只监听 `127.0.0.1:8888`。
+
+- 有 SSH：使用上面的 SSH 隧道。
+- 云工作区没有 SSH：使用平台的 **8888 端口转发 / 预览**，设为私有访问。平台需要支持转发容器的本机监听地址；不要把密码登录页未经 HTTPS 直接公开到互联网。
+- 容器模式支持监控、网站管理和 Nginx 启停 / 重启；SSH、Cron、MySQL 等系统服务显示“容器不支持”，不会尝试调用 systemctl。
+- Nginx 日志显示最近 100 行错误日志，替代 journald。
+- 无 systemd 的容器没有系统自启动承诺：工作区停止或重建会结束进程；持久化需要平台保存 `/etc/ubuntu-node`、`/opt/ubuntu-node`、`/var/lib/ubuntu-node`、Nginx 配置与网站目录。仅保存程序仓库不会保存账号和网站。
+- 已有独立 Nginx 时，首次安装会提示先自行停止，避免接管你的已有进程。
+
+查看状态：
+
+```bash
+sudo supervisorctl -c /etc/ubuntu-node/supervisord.conf status
+sudo tail -n 100 /var/log/ubuntu-node-panel-error.log
+```
+
+容器重启后，如果 Supervisor 尚未运行：
+
+```bash
+sudo /usr/bin/supervisord -c /etc/ubuntu-node/supervisord.conf
+```
+
+如果 Supervisor 已运行但面板停止：
+
+```bash
+sudo supervisorctl -c /etc/ubuntu-node/supervisord.conf start all
+```
 
 ## 网站和服务
 
@@ -108,17 +138,19 @@ sudo apt-get install -y python3-flask python3-psutil
 bash -n install.sh
 ```
 
-GitHub Actions 在 Ubuntu 22.04 / 24.04 上执行回归测试，并在**临时 CI 虚拟机**实际安装，验证 systemd、权限边界、登录、静态站点、反向代理、站点移除与重复安装。`scripts/integration.py` 会安装系统包和服务，只用于可丢弃的测试机，不要直接在生产服务器运行。
+GitHub Actions 在 Ubuntu 22.04 / 24.04 虚拟机和无 systemd 的 Docker 容器上执行安装测试，在虚拟机上执行回归测试，并在**临时 CI 虚拟机**实际安装，验证 systemd、权限边界、登录、静态站点、反向代理、站点移除与重复安装。`scripts/integration.py` 会安装系统包和服务，只用于可丢弃的测试机，不要直接在生产服务器运行。
 
 界面使用真实 API 数据；系统操作单元测试使用模拟命令，不能代替真实 Ubuntu 安装验证。请查看仓库 Actions 的具体运行结果，不以语法检查代替功能验证。
 
 ## 停用与卸载
 
-先停用面板：
+systemd 环境先停用面板：
 
 ```bash
 sudo systemctl disable --now ubuntu-node
 ```
+
+容器环境停用：`sudo supervisorctl -c /etc/ubuntu-node/supervisord.conf shutdown`（同时停止本面板托管的 Nginx）。
 
 如需卸载，可手动移除 `/etc/systemd/system/ubuntu-node.service`、`/etc/sudoers.d/ubuntu-node`、`/usr/local/libexec/ubuntu-node-helper` 和 `/opt/ubuntu-node`，再执行 `sudo systemctl daemon-reload`。默认保留 Nginx、网站配置、网站文件、服务用户与数据库，以免影响已运行的网站。确认备份后再自行清理这些数据。
 

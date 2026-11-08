@@ -203,5 +203,28 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(path.exists())
 
 
+class SupervisorTests(unittest.TestCase):
+    @patch.object(helper, 'runtime', return_value='supervisor')
+    @patch.object(helper, 'run')
+    def test_status_and_restricted_actions(self, run, _mode):
+        run.return_value = subprocess.CompletedProcess([], 0, 'nginx RUNNING pid 42, uptime 0:02:00', '')
+        result = helper.dispatch({'action': 'services'})
+        self.assertEqual(result['runtime'], 'supervisor')
+        self.assertEqual(result['services'][0]['active'], 'active')
+        self.assertTrue(all(item['load'] == 'unsupported' for item in result['services'][1:]))
+        helper.dispatch({'action': 'service', 'service': 'nginx', 'operation': 'restart'})
+        self.assertEqual(run.call_args.args[0], ['/usr/bin/supervisorctl', '-c',
+                         '/etc/ubuntu-node/supervisord.conf', 'restart', 'nginx'])
+        for action in ('service', 'logs'):
+            with self.assertRaisesRegex(ValueError, '只支持'):
+                helper.dispatch({'action': action, 'service': 'ssh', 'operation': 'stop'})
+
+    @patch.object(helper, 'runtime', return_value='supervisor')
+    @patch.object(helper, 'run')
+    def test_reload_uses_nginx_signal(self, run, _mode):
+        helper.reload_nginx()
+        run.assert_called_once_with(['/usr/sbin/nginx', '-s', 'reload'])
+
+
 if __name__ == '__main__':
     unittest.main()
